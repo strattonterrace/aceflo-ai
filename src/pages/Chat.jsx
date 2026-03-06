@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useRef } from "react";
 import { Session } from "@/entities/Session";
 import { User } from "@/entities/User";
@@ -247,6 +246,39 @@ Voice: Candid, motivational, playful yet focused. Push them forward.`
     };
 
     return modePrompts[selectedMode];
+  };
+
+  // Semantic similarity check: returns the most similar existing goal or null
+  const findSimilarExistingGoal = async (detectedGoalText) => {
+    if (!detectedGoalText || detectedGoalText.length < 3) return null;
+    try {
+      const existingGoals = await ProgressEntity.filter({ status: ["planning", "active", "blocked"] });
+      if (!existingGoals.length) return null;
+
+      const normalize = (str) => str.toLowerCase().replace(/[^a-z0-9\s]/g, '').split(/\s+/).filter(Boolean);
+      const detectedWords = new Set(normalize(detectedGoalText));
+
+      let bestMatch = null;
+      let bestScore = 0;
+
+      for (const goal of existingGoals) {
+        const goalWords = new Set(normalize(goal.goal));
+        const intersection = [...detectedWords].filter(w => goalWords.has(w)).length;
+        const union = new Set([...detectedWords, ...goalWords]).size;
+        const score = union > 0 ? intersection / union : 0;
+
+        if (score > bestScore) {
+          bestScore = score;
+          bestMatch = goal;
+        }
+      }
+
+      // Threshold: 0.3 Jaccard similarity = meaningful overlap
+      return bestScore >= 0.3 ? bestMatch : null;
+    } catch (e) {
+      console.error("Error in findSimilarExistingGoal:", e);
+      return null;
+    }
   };
 
   const sendMessage = async () => {
