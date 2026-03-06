@@ -341,7 +341,38 @@ Voice: Candid, motivational, playful yet focused. Push them forward.`
       }
 
       // Get AI response using the determined mode
-      const prompt = `${getSystemPrompt(messageMode)}${userContext}
+      // First do a quick LLM call to detect if there's a goal in the message, then check for existing similar goals
+      const quickDetectResponse = await InvokeLLM({
+        prompt: `Does the following message express a goal or intention the user wants to achieve or track?\nMessage: "${userMessage.content}"\nIf yes, provide a short 3-7 word goal title. If no, return null.`,
+        response_json_schema: {
+          type: "object",
+          properties: {
+            goal_detected: { type: "boolean" },
+            suggested_goal: { type: "string" }
+          },
+          required: ["goal_detected"]
+        }
+      });
+
+      let existingGoalContext = "";
+      let matchedExistingGoal = null;
+
+      if (quickDetectResponse.goal_detected && quickDetectResponse.suggested_goal) {
+        matchedExistingGoal = await findSimilarExistingGoal(quickDetectResponse.suggested_goal);
+        if (matchedExistingGoal) {
+          existingGoalContext = `
+
+IMPORTANT CONTEXT: The user already has an existing active goal that closely matches what they're talking about:
+- Existing goal: "${matchedExistingGoal.goal}"
+- Status: ${matchedExistingGoal.status}
+- Progress: ${matchedExistingGoal.progress_percentage || 0}%
+- Category: ${matchedExistingGoal.category}
+
+Because this goal already exists, DO NOT suggest creating a new goal. Instead, acknowledge the existing goal and offer to: check its progress, refine its details, or help the user take the next step toward it. Set goal_detected to false in your response metadata.`;
+        }
+      }
+
+      const prompt = `${getSystemPrompt(messageMode)}${userContext}${existingGoalContext}
 
 Previous conversation:
 ${updatedMessages.slice(-5).map(m => `${m.role}: ${m.content}`).join('\n')}
@@ -351,6 +382,15 @@ User's latest message: "${userMessage.content}"
 Respond as ACE.IO in ${messageMode.toUpperCase()} mode.
 
 IMPORTANT: Also analyze if the user is expressing a goal or intention they want to achieve. If they are, include detection metadata in your response.`;
+
+      if (matchedExistingGoal) {
+        console.log('Analytics: existing_goal_detected', {
+          detectedGoal: quickDetectResponse.suggested_goal,
+          matchedGoalId: matchedExistingGoal.id,
+          matchedGoalTitle: matchedExistingGoal.goal,
+          sessionId: sessionToUse?.id
+        });
+      }
 
       const response = await InvokeLLM({
         prompt: prompt,
